@@ -7,21 +7,25 @@ from PyQt5.QtGui import QPainter, QColor, QTransform
 from PyQt5.QtWidgets import QApplication, QWidget
 from pystray import Icon, Menu, MenuItem
 from PIL import Image, ImageDraw
-
+import win32api, win32con
 
 class EyesWidget(QWidget):
     trigger_happy = pyqtSignal()
     trigger_wink = pyqtSignal()
     trigger_sad = pyqtSignal()
+    trigger_looking = pyqtSignal()
+    trigger_move = pyqtSignal() # New signal
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Clignement synchronisé")
         self.setGeometry(100, 100, 400, 300)
         self.setStyleSheet("background-color: black;")
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.MSWindowsFixedSizeDialogHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        
 
-        # Variables pour les yeux
+        # Variables pour les yeux   
         self.eye1_x = 80  # Oeil gauche
         self.eye1_y = 100
         self.eye1_radius = 50
@@ -56,6 +60,22 @@ class EyesWidget(QWidget):
         # Variables pour l'animation "triste"
         self.is_sad = False
         self.trigger_sad.connect(self.sad)
+
+        #Variable pour le mode "regarde"
+        self.is_looking = False
+        self.trigger_looking.connect(self.looking)
+        
+        # New variable for "move" mode
+        self.is_moving = False
+        self.trigger_move.connect(self.move)
+
+        # Timer to track the mouse position
+        self.mouse_timer = QTimer(self)
+        self.mouse_timer.timeout.connect(self.update_eye_positions)
+        self.mouse_timer.start(30)  # Update every 30 milliseconds
+        
+        self.last_mouse_x, self.last_mouse_y = win32api.GetCursorPos()
+        self.default_window_pos = self.frameGeometry().topLeft()
 
     def start_blinking(self):
         if not self.is_blinking and not self.is_winking:
@@ -94,10 +114,102 @@ class EyesWidget(QWidget):
             self.is_winking = False
             self.wink_step = 0
         self.update()
+
+    def looking(self):
+        self.is_looking = not self.is_looking
+        self.repaint()
+    
+    def move(self):
+        self.is_moving = not self.is_moving
+        self.repaint()
+    
+    def update_eye_positions(self):
+        mouse_x, mouse_y = win32api.GetCursorPos() #Get real position of the mouse
+        window_pos = self.frameGeometry().topLeft() #Get the window's coordinates
+        
+        # Transform the mouse coordinates to the window coordinates
+        mouse_x -= window_pos.x()
+        mouse_y -= window_pos.y()
+        
+        if self.is_moving:
             
+            # Calculate the center of the window
+            window_center_x = self.default_window_pos.x() + self.width() / 2
+            window_center_y = self.default_window_pos.y() + self.height() / 2
+
+            # Calculate the desired movement vector (from window center to mouse)
+            delta_x = mouse_x - (self.width() / 2)
+            delta_y = mouse_y - (self.height() / 2)
+            
+            # Calculate the distance between window center and mouse
+            distance = math.sqrt(delta_x**2 + delta_y**2)
+           
+            if distance > 0:
+                normalized_x = delta_x / distance
+                normalized_y = delta_y / distance
+            else:
+                normalized_x, normalized_y = 0,0
+
+            # Calculate the new window position without any radius.
+            new_window_x =  window_center_x - self.width()/2 + normalized_x * distance
+            new_window_y =  window_center_y - self.height() / 2 + normalized_y * distance
+            
+            # Move window
+            super().move(QPoint(int(new_window_x), int(new_window_y)))
+                
+        # Calculate the delta (vector) between the mouse and the eye
+        delta_x1 = mouse_x - (self.eye1_x + self.eye1_radius)
+        delta_y1 = mouse_y - (self.eye1_y + self.eye1_radius)
+
+        delta_x2 = mouse_x - (self.eye2_x + self.eye2_radius)
+        delta_y2 = mouse_y - (self.eye2_y + self.eye2_radius)
+
+        # Normalize the vector
+        distance1 = math.sqrt(delta_x1**2 + delta_y1**2)
+        if distance1 > 0:
+            normalized_x1 = delta_x1 / distance1
+            normalized_y1 = delta_y1 / distance1
+        else:
+            normalized_x1, normalized_y1 = 0, 0
+        
+        distance2 = math.sqrt(delta_x2**2 + delta_y2**2)
+        if distance2 > 0:
+            normalized_x2 = delta_x2 / distance2
+            normalized_y2 = delta_y2 / distance2
+        else:
+            normalized_x2, normalized_y2 = 0,0
+
+        # Limit the movement of the eyes within a range 
+        move_x1 = min(max(normalized_x1 * self.eye1_radius / 2, -self.eye1_radius/2), self.eye1_radius/2)
+        move_y1 = min(max(normalized_y1 * self.eye1_radius / 2, -self.eye1_radius/2), self.eye1_radius/2)
+
+        move_x2 = min(max(normalized_x2 * self.eye2_radius/2, -self.eye2_radius/2), self.eye2_radius/2)
+        move_y2 = min(max(normalized_y2 * self.eye2_radius/2, -self.eye2_radius/2), self.eye2_radius/2)
+        
+
+        # Set the new coordinates
+        self.eye1_x =  80 + move_x1 # move eye1 horizontally
+        self.eye1_y = 100 + move_y1 # move eye1 vertically
+
+        self.eye2_x = 220 + move_x2 # move eye2 horizontally
+        self.eye2_y = 100 + move_y2  # move eye2 vertically
+        
+        if not self.is_looking:
+            self.eye1_x = 80
+            self.eye1_y = 100
+            self.eye2_x = 220
+            self.eye2_y = 100
+        self.update()
+                
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw a semi-transparent background
+        painter.setBrush(QColor(0, 0, 0, 50))
+        painter.setPen(Qt.NoPen)
+        painter.drawRect(self.rect())
+
         eye_color = QColor(0, 255, 255)
 
         # Gestion du clignement (les deux yeux)
@@ -111,10 +223,10 @@ class EyesWidget(QWidget):
 
         # Gestion du clin d'oeil (oeil droit)
         if self.is_winking:
-             progress_wink = self.wink_step / self.total_wink_steps
-             wink_factor = math.sin(progress_wink * math.pi)
+            progress_wink = self.wink_step / self.total_wink_steps
+            wink_factor = math.sin(progress_wink * math.pi)
         else:
-             wink_factor = 0
+            wink_factor = 0
         
         wink_height_reduction = wink_factor * self.eye2_radius * 2
         
@@ -124,9 +236,9 @@ class EyesWidget(QWidget):
 
             # Dessiner le demi-cercle pour l'oeil gauche (avec clignement)
             rect1 = QRect(
-                self.eye1_x,
+                int(self.eye1_x),
                 int(self.eye1_y + height_reduction / 2),
-                self.eye1_radius * 2,
+                int(self.eye1_radius * 2),
                 max(0, int(self.eye1_radius * 2 - height_reduction))
             )
             painter.drawPie(
@@ -135,18 +247,18 @@ class EyesWidget(QWidget):
                     180 * 16
                 )
 
-             # Dessiner le demi-cercle pour l'oeil droit (avec clignement ou clin d'oeil)
+            # Dessiner le demi-cercle pour l'oeil droit (avec clignement ou clin d'oeil)
             rect2 = QRect(
-                self.eye2_x,
-                 int(self.eye2_y +  (height_reduction / 2 if not self.is_winking else wink_height_reduction / 2)),
-                self.eye2_radius * 2,
+                int(self.eye2_x),
+                int(self.eye2_y +  (height_reduction / 2 if not self.is_winking else wink_height_reduction / 2)),
+                int(self.eye2_radius * 2),
                 max(0, int(self.eye2_radius * 2 - (height_reduction if not self.is_winking else wink_height_reduction)))
-             )
+                )
             painter.drawPie(
                 rect2,
                 0 * 16,
                  180 * 16
-             )
+                )
         elif self.is_sad:
             painter.setBrush(eye_color)
             painter.setPen(Qt.NoPen)
@@ -157,12 +269,11 @@ class EyesWidget(QWidget):
             transform1.rotate(-45)
             transform1.translate(-(self.eye1_x + self.eye1_radius), -(self.eye1_y + self.eye1_radius))
             painter.setTransform(transform1)
-           
             # Dessiner le demi-cercle pour l'oeil gauche avec rotation et clignement inversé
             rect1 = QRect(
-                self.eye1_x,
+                int(self.eye1_x),
                 int(self.eye1_y - height_reduction / 2),  # Inverser l'effet
-                self.eye1_radius * 2,
+                int(self.eye1_radius * 2),
                 max(0, int(self.eye1_radius * 2 - height_reduction))
             )
             painter.drawPie(
@@ -182,9 +293,9 @@ class EyesWidget(QWidget):
 
             # Dessiner le demi-cercle pour l'oeil droit avec rotation et clignement inversé
             rect2 = QRect(
-                self.eye2_x,
+                int(self.eye2_x),
                 int(self.eye2_y - (height_reduction / 2 if not self.is_winking else wink_height_reduction / 2)), # Inverser l'effet
-                self.eye2_radius * 2,
+                int(self.eye2_radius * 2),
                 max(0, int(self.eye2_radius * 2 - (height_reduction if not self.is_winking else wink_height_reduction)))
                 )
             painter.drawPie(
@@ -231,12 +342,34 @@ def show_sad(window):
     print("Sad button clicked!")
     window.trigger_sad.emit()
 
+looking_state = False
+def show_looking(window):
+    global looking_state
+    looking_state = not looking_state
+    print("Looking toggle changed")
+    window.trigger_looking.emit()
+    
+move_state = False
+def show_move(window):
+    global move_state
+    move_state = not move_state
+    print("Move toggle changed")
+    window.trigger_move.emit()
 
+def get_looking_state(menu_item):
+    global looking_state
+    return looking_state
+
+def get_move_state(menu_item):
+    global move_state
+    return move_state
 def start_tray(app, window):
     menu = Menu(
         MenuItem("Happy", lambda: show_message(window)),
         MenuItem("Wink", lambda: show_wink(window)),
         MenuItem("Sad", lambda: show_sad(window)),
+        MenuItem("Looking", lambda: show_looking(window),checked=get_looking_state),
+        MenuItem("Move", lambda: show_move(window),checked=get_move_state),
         MenuItem("Quitter", lambda: quit_app(app))
     )
     icon = Icon("Eyes App", create_image(), menu=menu)
