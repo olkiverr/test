@@ -9,12 +9,23 @@ from pystray import Icon, Menu, MenuItem
 from PIL import Image, ImageDraw
 import win32api, win32con
 
+
+class NewWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("New Window")
+        self.setGeometry(300, 300, 200, 150)
+        self.setStyleSheet("background-color: white;")
+        self.show()
+
+
 class EyesWidget(QWidget):
     trigger_happy = pyqtSignal()
     trigger_wink = pyqtSignal()
     trigger_sad = pyqtSignal()
     trigger_looking = pyqtSignal()
-    trigger_move = pyqtSignal() # New signal
+    trigger_move = pyqtSignal()
+    trigger_border = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -22,7 +33,6 @@ class EyesWidget(QWidget):
         self.setGeometry(100, 100, 400, 300)
         self.setStyleSheet("background-color: black;")
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.MSWindowsFixedSizeDialogHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
         
 
         # Variables pour les yeux   
@@ -68,7 +78,12 @@ class EyesWidget(QWidget):
         # New variable for "move" mode
         self.is_moving = False
         self.trigger_move.connect(self.move)
-
+        
+         # New variable for "border" mode
+        self.is_borderless = True
+        self.trigger_border.connect(self.border)
+        
+        
         # Timer to track the mouse position
         self.mouse_timer = QTimer(self)
         self.mouse_timer.timeout.connect(self.update_eye_positions)
@@ -76,7 +91,10 @@ class EyesWidget(QWidget):
         
         self.last_mouse_x, self.last_mouse_y = win32api.GetCursorPos()
         self.default_window_pos = self.frameGeometry().topLeft()
+        self.target_window_pos = self.default_window_pos
 
+        # list to store the new windows
+        self.new_windows = []
     def start_blinking(self):
         if not self.is_blinking and not self.is_winking:
             self.is_blinking = True
@@ -120,8 +138,17 @@ class EyesWidget(QWidget):
         self.repaint()
     
     def move(self):
-        self.is_moving = not self.is_moving
-        self.repaint()
+         self.is_moving = not self.is_moving
+         self.repaint()
+         
+    def border(self):
+         self.is_borderless = not self.is_borderless
+         if self.is_borderless:
+              self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+         else:
+              self.setWindowFlags(self.windowFlags() & ~Qt.FramelessWindowHint)
+         self.show()  #Refresh flags
+         self.repaint()
     
     def update_eye_positions(self):
         mouse_x, mouse_y = win32api.GetCursorPos() #Get real position of the mouse
@@ -143,7 +170,7 @@ class EyesWidget(QWidget):
             
             # Calculate the distance between window center and mouse
             distance = math.sqrt(delta_x**2 + delta_y**2)
-           
+
             if distance > 0:
                 normalized_x = delta_x / distance
                 normalized_y = delta_y / distance
@@ -151,12 +178,17 @@ class EyesWidget(QWidget):
                 normalized_x, normalized_y = 0,0
 
             # Calculate the new window position without any radius.
-            new_window_x =  window_center_x - self.width()/2 + normalized_x * distance
-            new_window_y =  window_center_y - self.height() / 2 + normalized_y * distance
+            self.target_window_pos = QPoint(int(window_center_x - self.width()/2 + normalized_x * distance),
+                                          int(window_center_y - self.height() / 2 + normalized_y * distance))
+                                        
+            current_pos = self.frameGeometry().topLeft()
             
-            # Move window
-            super().move(QPoint(int(new_window_x), int(new_window_y)))
-                
+            # Smooth the movement
+            new_x = current_pos.x() + (self.target_window_pos.x() - current_pos.x()) * 0.1
+            new_y = current_pos.y() + (self.target_window_pos.y() - current_pos.y()) * 0.1
+            
+            super().move(QPoint(int(new_x), int(new_y)))
+
         # Calculate the delta (vector) between the mouse and the eye
         delta_x1 = mouse_x - (self.eye1_x + self.eye1_radius)
         delta_y1 = mouse_y - (self.eye1_y + self.eye1_radius)
@@ -206,7 +238,10 @@ class EyesWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # Draw a semi-transparent background
-        painter.setBrush(QColor(0, 0, 0, 50))
+        if self.is_borderless:
+            painter.setBrush(Qt.transparent)
+        else:
+            painter.setBrush(QColor(0, 0, 0, 50))
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect())
 
@@ -356,6 +391,13 @@ def show_move(window):
     print("Move toggle changed")
     window.trigger_move.emit()
 
+border_state = True
+def show_border(window):
+   global border_state
+   border_state = not border_state
+   print("Border toggle changed")
+   window.trigger_border.emit()
+
 def get_looking_state(menu_item):
     global looking_state
     return looking_state
@@ -363,13 +405,29 @@ def get_looking_state(menu_item):
 def get_move_state(menu_item):
     global move_state
     return move_state
+    
+def get_border_state(menu_item):
+    global border_state
+    return border_state
+
+def show_new_window(app, window):
+    new_window = NewWindow()
+    window.new_windows.append(new_window)
+    print("Open new window")
+
 def start_tray(app, window):
     menu = Menu(
-        MenuItem("Happy", lambda: show_message(window)),
-        MenuItem("Wink", lambda: show_wink(window)),
-        MenuItem("Sad", lambda: show_sad(window)),
-        MenuItem("Looking", lambda: show_looking(window),checked=get_looking_state),
-        MenuItem("Move", lambda: show_move(window),checked=get_move_state),
+        MenuItem("Eyes", Menu(
+            MenuItem("Happy", lambda: show_message(window)),
+            MenuItem("Wink", lambda: show_wink(window)),
+            MenuItem("Sad", lambda: show_sad(window)),
+            MenuItem("Looking", lambda: show_looking(window),checked=get_looking_state),
+            MenuItem("Move", lambda: show_move(window),checked=get_move_state),
+        )),
+        MenuItem("test", Menu(
+            MenuItem("Border", lambda: show_border(window), checked=get_border_state),
+            MenuItem("Window", lambda: show_new_window(app, window)),
+        )),
         MenuItem("Quitter", lambda: quit_app(app))
     )
     icon = Icon("Eyes App", create_image(), menu=menu)
