@@ -26,6 +26,8 @@ class EyesWidget(QWidget):
     trigger_looking = pyqtSignal()
     trigger_move = pyqtSignal()
     trigger_border = pyqtSignal()
+    trigger_random_move = pyqtSignal()
+    trigger_random_look = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -77,12 +79,18 @@ class EyesWidget(QWidget):
         
         # New variable for "move" mode
         self.is_moving = False
-        self.trigger_move.connect(self.move)
+        self.trigger_move.connect(self.move_window)
         
-         # New variable for "border" mode
+        # New variable for "border" mode
         self.is_borderless = True
         self.trigger_border.connect(self.border)
         
+        #New variable for "random move"
+        self.trigger_random_move.connect(self.random_move)
+        
+        #New variable for "random look"
+        self.trigger_random_look.connect(self.random_look)
+
         
         # Timer to track the mouse position
         self.mouse_timer = QTimer(self)
@@ -95,6 +103,26 @@ class EyesWidget(QWidget):
 
         # list to store the new windows
         self.new_windows = []
+        
+        # Random Move animation variables
+        self.random_move_timer = QTimer(self)
+        self.random_move_timer.timeout.connect(self.animate_random_move)
+        self.target_random_move_pos = None
+        self.current_random_move_pos = None
+        self.move_duration = 300  # Time to move (in ms)
+        self.move_step = 0
+        
+        # Random look animation variables
+        self.random_look_timer = QTimer(self)
+        self.random_look_timer.timeout.connect(self.animate_random_look)
+        self.target_random_look_angle = None
+        self.look_duration = 2000
+        self.look_step = 0
+        self.original_eye1_x = self.eye1_x
+        self.original_eye1_y = self.eye1_y
+        self.original_eye2_x = self.eye2_x
+        self.original_eye2_y = self.eye2_y
+
     def start_blinking(self):
         if not self.is_blinking and not self.is_winking:
             self.is_blinking = True
@@ -137,18 +165,95 @@ class EyesWidget(QWidget):
         self.is_looking = not self.is_looking
         self.repaint()
     
-    def move(self):
-         self.is_moving = not self.is_moving
-         self.repaint()
-         
+    def move_window(self):
+        self.is_moving = not self.is_moving
+        self.repaint()
+        
     def border(self):
-         self.is_borderless = not self.is_borderless
-         if self.is_borderless:
-              self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
-         else:
-              self.setWindowFlags(self.windowFlags() & ~Qt.FramelessWindowHint)
-         self.show()  #Refresh flags
-         self.repaint()
+        self.is_borderless = not self.is_borderless
+        if self.is_borderless:
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.FramelessWindowHint)
+        self.show()  #Refresh flags
+        self.repaint()
+    
+    def random_move(self):
+        screen = QApplication.desktop().screenGeometry()
+        new_x = random.randint(screen.x(), screen.right() - self.width())
+        new_y = random.randint(screen.y(), screen.bottom() - self.height())
+        self.target_random_move_pos = QPoint(new_x, new_y)
+        self.current_random_move_pos = self.frameGeometry().topLeft()
+        self.move_step = 0
+        self.random_move_timer.start(30)  # Update animation every 30ms
+        
+
+    def animate_random_move(self):
+        self.move_step += 1
+        if self.move_step * 30 >= self.move_duration:
+            self.random_move_timer.stop()
+            super().move(self.target_random_move_pos)
+            self.default_window_pos = self.frameGeometry().topLeft()
+            self.target_window_pos = self.default_window_pos
+            return
+    
+        progress = self.move_step * 30 / self.move_duration
+        
+        # Quadratic ease-out function
+        progress = 1 - (1 - progress) ** 2
+        
+        current_x = self.current_random_move_pos.x()
+        current_y = self.current_random_move_pos.y()
+        
+        target_x = self.target_random_move_pos.x()
+        target_y = self.target_random_move_pos.y()
+
+        new_x = current_x + (target_x - current_x) * progress
+        new_y = current_y + (target_y - current_y) * progress
+        
+        super().move(QPoint(int(new_x),int(new_y)))
+        
+    def random_look(self):
+        # Generate a random angle between 0 and 360 degrees
+        random_angle = random.uniform(0, 360)
+        self.target_random_look_angle = random_angle
+        self.look_step = 0
+        self.random_look_timer.start(30)
+    
+    def animate_random_look(self):
+        self.look_step += 1
+        if self.look_step * 30 >= self.look_duration:
+            self.random_look_timer.stop()
+            self.eye1_x = self.original_eye1_x
+            self.eye1_y = self.original_eye1_y
+            self.eye2_x = self.original_eye2_x
+            self.eye2_y = self.original_eye2_y
+            self.update()
+            return
+        
+        progress = self.look_step * 30 / self.look_duration
+        
+        #Ease in out function
+        progress = (math.sin(progress * math.pi - math.pi / 2) + 1) / 2
+
+        angle_rad = math.radians(self.target_random_look_angle)
+        
+        # Calculate the displacement of the eyes from their original position
+        move_x1 = math.cos(angle_rad) * self.eye1_radius/2 * progress
+        move_y1 = math.sin(angle_rad) * self.eye1_radius/2 * progress
+        
+        move_x2 = math.cos(angle_rad) * self.eye2_radius/2 * progress
+        move_y2 = math.sin(angle_rad) * self.eye2_radius/2 * progress
+
+        self.eye1_x = self.original_eye1_x + move_x1
+        self.eye1_y = self.original_eye1_y + move_y1
+        
+        self.eye2_x = self.original_eye2_x + move_x2
+        self.eye2_y = self.original_eye2_y + move_y2
+        
+        self.update()
+
+
     
     def update_eye_positions(self):
         mouse_x, mouse_y = win32api.GetCursorPos() #Get real position of the mouse
@@ -220,11 +325,12 @@ class EyesWidget(QWidget):
         
 
         # Set the new coordinates
-        self.eye1_x =  80 + move_x1 # move eye1 horizontally
-        self.eye1_y = 100 + move_y1 # move eye1 vertically
+        if not self.random_look_timer.isActive():
+            self.eye1_x =  80 + move_x1 # move eye1 horizontally
+            self.eye1_y = 100 + move_y1 # move eye1 vertically
 
-        self.eye2_x = 220 + move_x2 # move eye2 horizontally
-        self.eye2_y = 100 + move_y2  # move eye2 vertically
+            self.eye2_x = 220 + move_x2 # move eye2 horizontally
+            self.eye2_y = 100 + move_y2  # move eye2 vertically
         
         if not self.is_looking:
             self.eye1_x = 80
@@ -393,10 +499,19 @@ def show_move(window):
 
 border_state = True
 def show_border(window):
-   global border_state
-   border_state = not border_state
-   print("Border toggle changed")
-   window.trigger_border.emit()
+    global border_state
+    border_state = not border_state
+    print("Border toggle changed")
+    window.trigger_border.emit()
+
+def show_random_move(window):
+    print("Random Move button clicked!")
+    window.trigger_random_move.emit()
+    
+def show_random_look(window):
+    print("Random Look button clicked")
+    window.trigger_random_look.emit()
+
 
 def get_looking_state(menu_item):
     global looking_state
@@ -427,6 +542,8 @@ def start_tray(app, window):
         MenuItem("test", Menu(
             MenuItem("Border", lambda: show_border(window), checked=get_border_state),
             MenuItem("Window", lambda: show_new_window(app, window)),
+            MenuItem("Random Move", lambda: show_random_move(window)),
+            MenuItem("Random Look", lambda: show_random_look(window)),
         )),
         MenuItem("Quitter", lambda: quit_app(app))
     )
